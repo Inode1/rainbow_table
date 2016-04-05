@@ -35,6 +35,7 @@ documentation and/or software.
  
 #include <cstring>
 #include <iostream>
+#include <string>
  
  
 // a small class for calculating MD5 hashes of strings or byte arrays
@@ -58,6 +59,10 @@ public:
     void update(const char *buf, size_type length);
     MD5& finalize();
     std::string hexdigest() const;
+    std::string returnString() const
+    {
+        return std::string(reinterpret_cast<const char*>(digest), reinterpret_cast<const char*>(&digest[15]));
+    };
     size_t Hash64bit() const;
     friend std::ostream& operator<<(std::ostream&, MD5 md5);
  

@@ -1,4 +1,3 @@
-#!/usr/bin/bash
 rm -r CMakeFiles
 rm Makefile
 rm cmake_install.cmake
