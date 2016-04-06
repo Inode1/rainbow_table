@@ -5,6 +5,10 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <algorithm>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <future>
 
 #include "md5.h"
 
@@ -12,8 +16,8 @@ constexpr uint8_t asciBegin = 0x20;
 constexpr uint8_t asciEnd   = 0x7e;
 constexpr uint8_t mode   = asciEnd - asciBegin + 1;
 constexpr uint8_t wordSize  = 5;
-constexpr uint16_t reductionFunctionCount = 1000;
-constexpr uint32_t wordCount = 10000;
+constexpr uint16_t reductionFunctionCount = 50000;
+constexpr uint32_t wordCount = 10000000;
 std::random_device rd;
 std::mt19937 gen(rd());
 
@@ -85,6 +89,46 @@ namespace std {
   };
 }
 
+std::mutex         mutex;
+std::atomic_size_t size{0};
+
+int concurency_task(std::unordered_set<HashMd5>& collisionPasswordSet, std::unordered_map<std::string, std::string>& reverseCollision,
+                    const std::vector<uint32_t>& reducionFunction)
+{
+
+    while (size.load() < wordCount)
+    {
+
+        //std::cout << "Iteration: " << i << std::endl;
+        HashMd5 value{generateWord()};
+
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (collisionPasswordSet.find(value) != collisionPasswordSet.end())
+            {
+                continue;
+            }
+
+            collisionPasswordSet.insert(value).first;
+            size.fetch_add(1); 
+        }
+        bool isMd5Time = true;
+        std::string middleResult = value.Value; 
+        
+        for (uint32_t j = 0; j < 2 * reductionFunctionCount; ++j)
+        {
+            middleResult = isMd5Time ? md5(middleResult) 
+                                     : getWordBySeed(reducionFunction[j / 2], md5_64bit(middleResult));
+            isMd5Time = !isMd5Time;
+        }   
+
+        std::lock_guard<std::mutex> lock(mutex);
+        reverseCollision.emplace(middleResult, value.Value);
+    }
+    return 0;
+
+}
+
 int main()
 {
     std::vector<uint32_t> reducionFunction;       
@@ -94,11 +138,10 @@ int main()
         reducionFunction.push_back(i);
     }
 
-    std::unordered_set<HashMd5>              collisionPasswordSet;
+    std::unordered_set<HashMd5>                  collisionPasswordSet;
     collisionPasswordSet.reserve(wordCount);
-    std::unordered_map<std::string, std::string>  reverseCollision;
+    std::unordered_map<std::string, std::string> reverseCollision;
     reverseCollision.reserve(wordCount);
-
 
     // generate all table
     std::cout << "Begin generate rainbow table:" << std::endl
@@ -107,35 +150,21 @@ int main()
               << "    Count word in dictionary: " << static_cast<uint32_t>(wordCount) << std::endl;
     auto start = std::chrono::system_clock::now();
 
-    for (uint32_t i = 0; i < wordCount; ++i)
+
+    uint8_t n = std::thread::hardware_concurrency() - 1;
+    std::vector<std::future<int>> tasks;
+    tasks.reserve(n);
+    for (int i = 0; i < n; ++i)
     {
-        //std::cout << "Iteration: " << i << std::endl;
-        HashMd5 value{generateWord()};
-        if (collisionPasswordSet.find(value) != collisionPasswordSet.end())
-        {
-            --i;
-            continue;
-        }
-
-        auto it = collisionPasswordSet.insert(value).first;
-        bool isMd5Time = true;
-        std::string middleResult = it->Value; 
-        
-        for (uint32_t j = 0; j < 2 * reductionFunctionCount; ++j)
-        {
-            middleResult = isMd5Time ? md5(middleResult) 
-                                     : getWordBySeed(reducionFunction[j / 2], md5_64bit(middleResult));
-            isMd5Time = !isMd5Time;
-        }   
-
-        reverseCollision.emplace(middleResult, value.Value);
+        tasks.push_back(std::async(std::launch::async, std::bind(concurency_task, std::ref(collisionPasswordSet), std::ref(reverseCollision), std::cref(reducionFunction))));
     }
 
-/*    for (const auto& a: reverseCollision)
+    for (int i = 0; i < n; ++i)
     {
-        std::cout << a.first << "  " << a.second << std::endl;
+        tasks[i].wait();
     }
-*/
+
+
     std::cout << "Rainbow table build" << std::endl
               << "              Elapse time: " << std::chrono::duration_cast<std::chrono::microseconds>
                                            (std::chrono::system_clock::now() - start).count() << std::endl
